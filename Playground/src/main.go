@@ -1,19 +1,20 @@
 package main
 
 import (
-	"fmt"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main(){
-
-	rout := Testje()
-	fmt.Printf(rout)
-
-	//router2 := NewRouter2()
-
-	//log.Fatal(http.ListenAndServe(":8080", router2))
+	router := gin.Default()
+	router.GET("/someGet", gettingHandler)
+	//router := NewRouter2()
+	router.Run()
 }
 
+func gettingHandler(c *gin.Context){
+	c.Writer.Write([]byte ("HI"))
+}
 
 
 
