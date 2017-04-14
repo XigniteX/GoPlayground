@@ -5,103 +5,173 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 	"net/http"
-	"log"
 	"context"
+	"io/ioutil"
+	"encoding/json"
+	"log"
+	"fitbit"
+	"github.com/gin-gonic/contrib/sessions"
+	"model"
+	"fmt"
 )
 
-type Credentials struct {
-	Cid string `json:"cid"`
-	Csecret string `json:"csecret"`
-}
+//type Credentials struct {
+//	Cid string `json:"cid"`
+//	Csecret string `json:"csecret"`
+//}
 
-var c Credentials
-var conf_trakt *oauth2.Config
-var conf_strava *oauth2.Config
-var state string
+
+
+var conf_fitbit *oauth2.Config
+//var state string
+var client *http.Client
+
 
 func init(){
-	var c_trakt  Credentials
+	//conf_fitbit = &fitbit.Config()
 
-	c_trakt.Cid = "b8e22e27eeceab630753ea058c2e7a18c69f6eef24c0fd85b3da699c14b9f70b"
-	c_trakt.Csecret = "c1579194bae558083290084b5ad2f7df76c148712cd8b73e0f6359f89655b36a"
+	var c_fitbit model.Credentials
+	c_fitbit.Cid = "227TT7"
+	c_fitbit.Csecret = "98aa8d159b62dec86958ef6a38e79115"
+	//
+	//
+	var endpoint_fitbit = oauth2.Endpoint{}
+	endpoint_fitbit.AuthURL = "https://www.fitbit.com/oauth2/authorize"
+	endpoint_fitbit.TokenURL = "https://api.fitbit.com/oauth2/token"
 
 
-	var c_strava Credentials
-	c_strava.Cid = "12447"
-	c_strava.Csecret = "ed03ec4d23aa39a78f94433d5d2c62bc25b2c44e"
-
-	var endpoint_trakt oauth2.Endpoint
-	endpoint_trakt.AuthURL = "https://api-staging.trakt.tv/oauth/authorize"
-	endpoint_trakt.TokenURL = "https://api-staging.trakt.tv/oauth/token"
-
-	var endpoint_strava = oauth2.Endpoint{}
-	endpoint_strava.AuthURL = "https://www.strava.com/oauth/authorize"
-	endpoint_strava.TokenURL = "https://www.strava.com/oauth/token"
-
-	conf_trakt = &oauth2.Config{
-		ClientID:     c_trakt.Cid,
-		ClientSecret: c_trakt.Csecret,
+	conf_fitbit = &oauth2.Config{
+		ClientID:     c_fitbit.Cid,
+		ClientSecret: c_fitbit.Csecret,
 		RedirectURL:  "http://localhost:8000/callBack",
-		Scopes: []string{
-
-		},
-		Endpoint: endpoint_trakt,
+		Scopes: []string{"profile", "activity", "sleep", "weight" },
+		Endpoint: endpoint_fitbit,
 	}
 
-	conf_strava = &oauth2.Config{
-		ClientID:     c_strava.Cid,
-		ClientSecret: c_strava.Csecret,
-		RedirectURL:  "http://localhost:8000/callBack",
-		Scopes: []string{ },
-		Endpoint: endpoint_strava,
-	}
 }
 
-func getLoginURL(state string) string {
-	return conf_strava.AuthCodeURL(state)
+func getFitibitLoginURL() string {
+	return conf_fitbit.AuthCodeURL("state")
 }
 
 func main(){
-	router := gin.Default()
 
+	router := gin.Default()
+	store := sessions.NewCookieStore([]byte("secret"))
+
+	router.Use(sessions.Sessions("mysession", store))
+
+	router.StaticFS("/sports", http.Dir("C:\\Users\\OskAlb\\GIT\\GoPlayground\\Playground\\html\\sports"))
 	router.Use(gin.Logger())
 
-	router.GET("/index", gettingHandler)
+	router.GET("/", indexHandler)
+	router.GET("/login", loginHandler)
 	router.GET("/callBack", authHandler)
-	//router := NewRouter2()
+	router.GET("/api/user", userHandler)
+	router.GET("/api/activities", activitiesHandler)
+	router.GET("/api/activity/:key", activityHandler)
+
 	router.Run("localhost:8000")
 }
 
-func gettingHandler(c *gin.Context){
-	c.Writer.Write([]byte("<html><title>Golang Strava</title> <body> <a href='" + getLoginURL(state) + "'><button>Login with Strava!</button> </a> </body></html>"))
+func indexHandler(c *gin.Context){
+	c.HTML(http.StatusOK, "index.html", nil)
+}
+
+
+func loginHandler(c *gin.Context){
+	c.Writer.Write([]byte("<html><title>Sports</title> <body> <a href='" + getFitibitLoginURL() + "'><button>Login with Fitbit!</button> </a></body></html>"))
 }
 
 func authHandler(c *gin.Context){
-	token, err := conf_strava.Exchange(context.TODO(), c.Query("code"))
+	session := sessions.Default(c)
+
+	code := c.Query("code")
+	token, err := conf_fitbit.Exchange(context.TODO(), code)
 
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
+		c.Writer.WriteString(err.Error())
 		return
 	}
 
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{
 
 	})
-	httpClient := conf_strava.Client(ctx, token)
-	//svc, err := urlshortener.New(httpClient)
-	//client := conf_strava.Client(context.TODO(), token)
 
-//	shows, err := client.Get("https://www.strava.com/api/v3/athlete")
-	atlhete, err := httpClient.Get("https://www.strava.com/api/v3/athlete")
+	client = conf_fitbit.Client(ctx, token)
 
-	if err != nil {
-		c.AbortWithError(http.StatusBadRequest, err)
-		return
-	}
+	session.Set("sessionId", model.RandStringRunes(8))
+	session.Save()
 
-	log.Println(atlhete)
 
+	c.Writer.WriteString(string("Connected to Fitbit"))
 
 }
 
+func userHandler(c *gin.Context){
+	session := sessions.Default(c)
+	sessionId := session.Get("sessionId")
+
+	fmt.Println(sessionId)
+
+	resp, err := client.Get("https://api.fitbit.com/1/user/-/profile.json")
+	if err != nil {
+		c.HTML(http.StatusServiceUnavailable, "error.html", nil)
+		return
+	}
+
+	defer resp.Body.Close()
+	data, _ := ioutil.ReadAll(resp.Body)
+
+	user := fitbit.UserContainer{}
+	err2 := json.Unmarshal([]byte(data), &user)
+
+	if err2 != nil {
+		c.HTML(http.StatusServiceUnavailable,"error.html", nil)
+		log.Fatal(err2)
+	}
+
+	c.JSON(http.StatusOK, user)
+
+}
+
+func activitiesHandler(c *gin.Context){
+
+	resp, err := client.Get("https://api.fitbit.com/1/user/-/activities/list.json?beforeDate=2017-04-07&sort=asc&limit=20&offset=0")
+	if err != nil {
+		c.HTML(http.StatusServiceUnavailable, "error.html", nil)
+		return
+	}
+
+	defer resp.Body.Close()
+	data, _ := ioutil.ReadAll(resp.Body)
+
+
+	ac := fitbit.ActivityContainer{}
+
+	err2 := json.Unmarshal([]byte(data), &ac)
+
+	if err2 != nil {
+		log.Fatal(err2)
+	}
+
+	c.JSON(http.StatusOK, ac)
+
+}
+
+func activityHandler(c *gin.Context){
+	key := c.Param("key")
+	resp, err := client.Get("https://api.fitbit.com/1/activities/" + key + ".json")
+	if err != nil{
+		c.HTML(http.StatusServiceUnavailable, "error.html", nil)
+		return
+	}
+
+	defer resp.Body.Close()
+	data, _:=ioutil.ReadAll(resp.Body)
+
+	c.Writer.WriteString(string(data))
+
+}
 
